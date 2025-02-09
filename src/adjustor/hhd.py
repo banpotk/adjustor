@@ -231,6 +231,10 @@ class AdjustorPlugin(HHDPlugin):
         self._stop()
 
 
+LEGION_GO_DMI = "83E1"
+LEGION_GO_S_DMIS = ["83L3", "83N6", "83Q2", "83Q3"]
+
+
 def autodetect(existing: Sequence[HHDPlugin]) -> Sequence[HHDPlugin]:
     if len(existing):
         return existing
@@ -256,10 +260,15 @@ def autodetect(existing: Sequence[HHDPlugin]) -> Sequence[HHDPlugin]:
     default_tdp = 15
     max_tdp = 30
 
-    if prod == "83E1" and not bool(os.environ.get("HHD_ADJ_ALLY")):
-        drivers.append(LenovoDriverPlugin())
+    legion_s = prod in LEGION_GO_S_DMIS
+    if (prod == LEGION_GO_DMI or legion_s) and not bool(
+        os.environ.get("HHD_ADJ_ALLY")
+    ):
+        drivers.append(LenovoDriverPlugin(legion_s=legion_s))
         drivers_matched = True
         use_acpi_call = True
+    if legion_s:
+        max_tdp = 33
 
     if (
         "ROG Ally RC71L" in prod

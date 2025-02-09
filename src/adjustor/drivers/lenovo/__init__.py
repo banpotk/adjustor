@@ -9,7 +9,6 @@ from adjustor.core.lenovo import (
     MIN_CURVE,
     TdpMode,
     get_bios_version,
-    get_charge_limit,
     get_full_fan_speed,
     get_power_light,
     get_power_light_v1,
@@ -33,7 +32,7 @@ TDP_DELAY = 0
 
 
 class LenovoDriverPlugin(HHDPlugin):
-    def __init__(self) -> None:
+    def __init__(self, legion_s=False) -> None:
         self.name = f"adjustor_lenovo"
         self.priority = 6
         self.log = "adjl"
@@ -42,13 +41,32 @@ class LenovoDriverPlugin(HHDPlugin):
         self.enforce_limits = True
         self.startup = True
         self.old_conf = None
+        self.old_mode = None
+        self.prev_charge_limit = None
         self.sys_tdp = False
         self.fan_curve_set = False
-        self.notify_tdp = False
+        self.legion_s = legion_s
+        if legion_s:
+            # AC 40/43/53W
+            # DC 33/33/43W
+            self.max_watts = 40
+            self.max_watts_sppt = 43
+            self.max_watts_fppt = 53
+            self.fppt_ratio = 53 / 40
+            self.performance_tdp = 25
+        else:
+            self.max_watts = 30
+            self.max_watts_sppt = 32
+            self.max_watts_fppt = 41
+            self.fppt_ratio = 41/30
+            self.performance_tdp = 20
 
         bios_version = get_bios_version()
-        logger.info(f"Lenovo BIOS version: {bios_version}")
-        self.power_light_v2 = bios_version >= 35
+        if legion_s:
+            self.power_light_v2 = False
+        else:
+            logger.info(f"Lenovo BIOS version: {bios_version}")
+            self.power_light_v2 = bios_version >= 35
 
         self.queue_fan = None
         self.queue_tdp = None
@@ -65,12 +83,25 @@ class LenovoDriverPlugin(HHDPlugin):
 
         self.initialized = True
         out = {"tdp": {"lenovo": load_relative_yaml("settings.yml")}}
+        if self.legion_s:
+            out["tdp"]["lenovo"]["children"]["power_light"]["title"] = _("Power Light")
         if not self.power_light_v2:
             del out["tdp"]["lenovo"]["children"]["power_light_sleep"]
         if not self.enforce_limits:
             out["tdp"]["lenovo"]["children"]["tdp"]["modes"]["custom"]["children"][
                 "tdp"
             ]["max"] = 40
+        else:
+            out["tdp"]["lenovo"]["children"]["tdp"]["modes"]["custom"]["children"][
+                "tdp"
+            ]["max"] = self.max_watts
+        if self.legion_s:
+            out["tdp"]["lenovo"]["children"]["tdp"]["modes"]["performance"][
+                "unit"
+            ] = f"25W"
+            out["tdp"]["lenovo"]["children"]["tdp"]["modes"]["custom"][
+                "unit"
+            ] = f"→ 33/40W"
         return out
 
     def open(
@@ -106,8 +137,6 @@ class LenovoDriverPlugin(HHDPlugin):
             else:
                 conf["tdp.lenovo.power_light"] = get_power_light_v1()
 
-            conf["tdp.lenovo.charge_limit"] = get_charge_limit()
-
         # If not old config, exit, as values can not be set
         if not self.old_conf:
             self.old_conf = conf["tdp.lenovo"]
@@ -138,11 +167,10 @@ class LenovoDriverPlugin(HHDPlugin):
             ):
                 set_power_light(power_light_sleep, suspend=True)
 
-        charge_limit = conf["tdp.lenovo.charge_limit"].to(bool)
-        if charge_limit is not None and charge_limit != self.old_conf[
-            "charge_limit"
-        ].to(bool):
+        charge_limit = conf.get("tdp.lenovo.charge_limit", False)
+        if charge_limit != self.prev_charge_limit:
             set_charge_limit(charge_limit)
+            self.prev_charge_limit = charge_limit
 
         #
         # TDP
@@ -153,6 +181,7 @@ class LenovoDriverPlugin(HHDPlugin):
         new_tdp = self.new_tdp
         self.new_tdp = None
         new_mode = self.new_mode
+        notify_tdp = False
         self.new_mode = None
         if new_tdp:
             # For TDP values received from steam, set the appropriate
@@ -161,7 +190,7 @@ class LenovoDriverPlugin(HHDPlugin):
                 mode = "quiet"
             elif new_tdp == 15:
                 mode = "balanced"
-            elif new_tdp == 20:
+            elif new_tdp == self.performance_tdp:
                 mode = "performance"
             else:
                 mode = "custom"
@@ -171,7 +200,8 @@ class LenovoDriverPlugin(HHDPlugin):
             conf["tdp.lenovo.tdp.mode"] = mode
         else:
             mode = conf["tdp.lenovo.tdp.mode"].to(str)
-        if mode is not None and mode != self.old_conf["tdp.mode"].to(str):
+        if mode is not None and mode != self.old_mode:
+            self.old_mode = mode
             set_tdp_mode(cast(TdpMode, mode))
             tdp_reset = True
 
@@ -181,6 +211,9 @@ class LenovoDriverPlugin(HHDPlugin):
             if not new_tdp:
                 self.sys_tdp = False
             tdp_reset = True
+            if self.old_mode is not None:
+                notify_tdp = True
+            self.old_mode = mode
         conf["tdp.lenovo.tdp.mode"] = new_mode
 
         # Reset fan curve on mode change
@@ -215,7 +248,7 @@ class LenovoDriverPlugin(HHDPlugin):
 
             old_steady = steady
             if self.enforce_limits:
-                steady = min(max(steady, 4), 30)
+                steady = min(max(steady, 4), self.max_watts)
             else:
                 steady = min(max(steady, 0), 50)
             if old_steady != steady:
@@ -227,12 +260,12 @@ class LenovoDriverPlugin(HHDPlugin):
             if steady_updated and not new_tdp:
                 self.sys_tdp = False
 
-            if self.startup and (steady > 30 or steady < 7):
+            if self.startup and (steady > self.max_watts or steady < 7):
                 logger.warning(
                     f"TDP ({steady}) outside the device spec. Resetting for stability reasons."
                 )
-                steady = 30
-                conf["tdp.lenovo.tdp.custom.tdp"] = 30
+                steady = self.max_watts
+                conf["tdp.lenovo.tdp.custom.tdp"] = self.max_watts
                 steady_updated = True
 
             boost = conf["tdp.lenovo.tdp.custom.boost"].to(bool)
@@ -248,9 +281,14 @@ class LenovoDriverPlugin(HHDPlugin):
                 if boost:
                     set_steady_tdp(steady)
                     time.sleep(TDP_DELAY)
-                    set_slow_tdp(steady + 2)
+                    set_slow_tdp(steady + (self.max_watts_sppt - self.max_watts))
                     time.sleep(TDP_DELAY)
-                    set_fast_tdp(min(42, int(steady * 41 / 30)))
+                    set_fast_tdp(
+                        min(
+                            self.max_watts_fppt,
+                            int(steady * self.fppt_ratio),
+                        )
+                    )
                 else:
                     set_steady_tdp(steady)
                     time.sleep(TDP_DELAY)
@@ -322,14 +360,13 @@ class LenovoDriverPlugin(HHDPlugin):
         if self.sys_tdp:
             conf["tdp.lenovo.cycle_info"] = _("Steam is controlling TDP")
         else:
-            conf["tdp.lenovo.cycle_info"] = _("Legion L + Y changes TDP Mode")
+            conf["tdp.lenovo.cycle_info"] = _("Legion Button + Y changes TDP Mode")
 
         # Save current config
         self.old_conf = conf["tdp.lenovo"]
 
-        if self.notify_tdp:
-            self.notify_tdp = False
-            print(new_mode)
+        if notify_tdp:
+            notify_tdp = False
             if conf.get("tdp.lenovo.tdp_rgb", False):
                 self.emit({"type": "special", "event": f"tdp_cycle_{new_mode}"})  # type: ignore
 
@@ -349,9 +386,6 @@ class LenovoDriverPlugin(HHDPlugin):
                         self.new_mode = "balanced"
                     case "performance":
                         self.new_mode = "performance"
-            print(ev)
-            if ev["type"] == "acpi" and ev.get("event", None) == "tdp":
-                self.notify_tdp = True
 
     def close(self):
         pass
