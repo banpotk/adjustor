@@ -10,7 +10,7 @@ from hhd.plugins.plugin import Emitter
 from hhd.utils import expanduser
 
 from adjustor.core.acpi import check_perms, initialize
-from adjustor.core.const import CPU_DATA, DEV_DATA, PLATFORM_PROFILE_MAP, ENERGY_MAP
+from adjustor.core.const import CPU_DATA, DEV_DATA, ASUS_DATA
 
 from .i18n import _
 
@@ -243,6 +243,7 @@ def autodetect(existing: Sequence[HHDPlugin]) -> Sequence[HHDPlugin]:
     from .drivers.lenovo import LenovoDriverPlugin
     from .drivers.smu import SmuDriverPlugin, SmuQamPlugin
     from .drivers.amd import AmdGPUPlugin
+    from .drivers.battery import BatteryPlugin
 
     drivers = []
     with open("/sys/devices/virtual/dmi/id/product_name") as f:
@@ -261,30 +262,26 @@ def autodetect(existing: Sequence[HHDPlugin]) -> Sequence[HHDPlugin]:
     max_tdp = 30
 
     legion_s = prod in LEGION_GO_S_DMIS
-    if (prod == LEGION_GO_DMI or legion_s) and not bool(
-        os.environ.get("HHD_ADJ_ALLY")
-    ):
+    if (prod == LEGION_GO_DMI or legion_s) and not bool(os.environ.get("HHD_ADJ_ALLY")):
         drivers.append(LenovoDriverPlugin(legion_s=legion_s))
         drivers_matched = True
         use_acpi_call = True
     if legion_s:
         max_tdp = 33
 
-    if (
-        "ROG Ally RC71L" in prod
-        or "ROG Ally X RC72L" in prod
-        or bool(os.environ.get("HHD_ADJ_DEBUG"))
-        or bool(os.environ.get("HHD_ADJ_ALLY"))
-    ):
-        drivers.append(AsusDriverPlugin("RC72L" in prod))
-        drivers_matched = True
-        min_tdp = 7
+    for k, v in ASUS_DATA.items():
+        if k in prod:
+            drivers.append(AsusDriverPlugin(v))
+            drivers_matched = True
+            min_tdp = v['min_tdp']
+            max_tdp = v['max_tdp']
+            break
 
     if os.environ.get("HHD_ADJ_DEBUG") or os.environ.get("HHD_ENABLE_SMU"):
         drivers_matched = False
 
     if not drivers_matched and prod in DEV_DATA:
-        dev, cpu, pp_enable = DEV_DATA[prod]
+        dev, cpu, pp_enable, energy_map = DEV_DATA[prod]
 
         try:
             # Set values for the steam slider
@@ -308,8 +305,8 @@ def autodetect(existing: Sequence[HHDPlugin]) -> Sequence[HHDPlugin]:
         drivers.append(
             SmuQamPlugin(
                 dev,
-                PLATFORM_PROFILE_MAP if pp_enable else None,
-                ENERGY_MAP,
+                energy_map,
+                pp_enable=pp_enable,
                 init_tdp=not prod == "83E1",
             ),
         )
@@ -317,7 +314,7 @@ def autodetect(existing: Sequence[HHDPlugin]) -> Sequence[HHDPlugin]:
         use_acpi_call = True
 
     if not drivers_matched:
-        for name, (dev, cpu) in CPU_DATA.items():
+        for name, (dev, cpu, energy_map) in CPU_DATA.items():
             if name in cpuinfo:
                 drivers.append(
                     SmuDriverPlugin(
@@ -327,7 +324,7 @@ def autodetect(existing: Sequence[HHDPlugin]) -> Sequence[HHDPlugin]:
                     )
                 )
                 drivers.append(
-                    SmuQamPlugin(dev, PLATFORM_PROFILE_MAP, ENERGY_MAP),
+                    SmuQamPlugin(dev, energy_map),
                 )
                 use_acpi_call = True
                 break
@@ -336,13 +333,14 @@ def autodetect(existing: Sequence[HHDPlugin]) -> Sequence[HHDPlugin]:
         from .drivers.general import GeneralPowerPlugin
 
         logger.info(f"No tdp drivers found for this device, using generic plugin.")
-        
+
         is_steamdeck = "Jupiter" in prod or "Galileo" in prod
-        return [GeneralPowerPlugin(is_steamdeck=is_steamdeck)]
+        return [GeneralPowerPlugin(is_steamdeck=is_steamdeck), BatteryPlugin()]
 
     return [
         *drivers,
         AdjustorInitPlugin(use_acpi_call=use_acpi_call),
         AdjustorPlugin(min_tdp, default_tdp, max_tdp),
+        BatteryPlugin(),
         AmdGPUPlugin(),
     ]

@@ -28,16 +28,31 @@ class DevideProfile(TypedDict):
     dev: dict[str, DeviceParams]
 
 
-PLATFORM_PROFILE_MAP = [
-    ("low-power", 0),
-    ("quiet", 0),
-    ("balanced", 13),
-    ("performance", 20),
-]
+class AsusTDP(TypedDict):
+    quiet: int
+    balanced_min: int
+    balanced: int
+    performance_min: int
+    performance: int
+    performance_dc: int | None
+    min_tdp: int
+    max_tdp_dc: int | None
+    max_tdp: int
+    max_tdp_oc: int
+    supports_cycle: bool | None
+
+
+# internal name for ppd, platform_profile choices, min TDP for
+# profile to apply, tdp target to apply when selecting profile
 ENERGY_MAP = [
-    ("power", 0),
-    ("balanced", 13),
-    ("performance", 20),
+    ("power", ["low-power", "quiet"], 0, 8),
+    ("balanced", ["balanced"], 13, 15),
+    ("performance", ["performance"], 20, 25),
+]
+ENERGY_MAP_18W = [
+    ("low-power", ["low-power", "quiet"], 0, 5),
+    ("balanced", ["balanced"], 8, 12),
+    ("performance", ["performance"], 13, 18),
 ]
 
 ALIB_PARAMS = {
@@ -112,33 +127,96 @@ DEV_PARAMS_8040: dict[str, DeviceParams] = DEV_PARAMS_30W
 DEV_PARAMS_HX370: dict[str, DeviceParams] = DEV_PARAMS_30W
 DEV_PARAMS_LEGO = DEV_PARAMS_30W
 
-DEV_DATA: dict[str, tuple[dict[str, DeviceParams], dict[str, AlibParams], bool]] = {
-    "NEO-01": (DEV_PARAMS_28W, ALIB_PARAMS_7040, False),
-    "V3": (DEV_PARAMS_28W, ALIB_PARAMS_8040, False),
-    "83E1": (DEV_PARAMS_LEGO, ALIB_PARAMS_7040, False),
-    "ONEXPLAYER F1Pro": (DEV_PARAMS_HX370, ALIB_PARAMS_HX370, False),
-    "ONEXPLAYER F1 EVA-02": (DEV_PARAMS_HX370, ALIB_PARAMS_HX370, False),
+DEV_DATA: dict[
+    str,
+    tuple[
+        dict[str, DeviceParams],
+        dict[str, AlibParams],
+        bool,
+        list[tuple[str, list[str], int, int]],
+    ],
+] = {
+    "NEO-01": (DEV_PARAMS_28W, ALIB_PARAMS_7040, False, ENERGY_MAP),
+    "V3": (DEV_PARAMS_28W, ALIB_PARAMS_8040, False, ENERGY_MAP),
+    "83E1": (DEV_PARAMS_LEGO, ALIB_PARAMS_7040, False, ENERGY_MAP),
+    "ONEXPLAYER F1Pro": (DEV_PARAMS_HX370, ALIB_PARAMS_HX370, False, ENERGY_MAP),
+    "ONEXPLAYER F1 EVA-02": (DEV_PARAMS_HX370, ALIB_PARAMS_HX370, False, ENERGY_MAP),
     # GPD Devices are 28W max
-    "G1618-04": (DEV_PARAMS_28W, ALIB_PARAMS_7040, False),
-    "G1617-01": (DEV_PARAMS_28W, ALIB_PARAMS_7040, False),
-    "G1619-04": (DEV_PARAMS_28W, ALIB_PARAMS_7040, False),
-    "G1619-05": (DEV_PARAMS_28W, ALIB_PARAMS_7040, False),
+    "G1618-04": (DEV_PARAMS_28W, ALIB_PARAMS_7040, False, ENERGY_MAP),
+    "G1617-01": (DEV_PARAMS_28W, ALIB_PARAMS_7040, False, ENERGY_MAP),
+    "G1619-04": (DEV_PARAMS_28W, ALIB_PARAMS_7040, False, ENERGY_MAP),
+    "G1619-05": (DEV_PARAMS_28W, ALIB_PARAMS_7040, False, ENERGY_MAP),
 }
 
-CPU_DATA: dict[str, tuple[dict[str, DeviceParams], dict[str, AlibParams]]] = {
-    "AMD Ryzen Z1 Extreme": (DEV_PARAMS_7040, ALIB_PARAMS_7040),
-    "AMD Ryzen Z1": (DEV_PARAMS_7040, ALIB_PARAMS_7040),
+CPU_DATA: dict[
+    str,
+    tuple[
+        dict[str, DeviceParams],
+        dict[str, AlibParams],
+        list[tuple[str, list[str], int, int]],
+    ],
+] = {
+    "AMD Ryzen Z1 Extreme": (DEV_PARAMS_7040, ALIB_PARAMS_7040, ENERGY_MAP),
+    "AMD Ryzen Z1": (DEV_PARAMS_7040, ALIB_PARAMS_7040, ENERGY_MAP),
     # Ayaneo AIR Pro, max is 18W
-    "AMD Ryzen 5 5560U": (DEV_PARAMS_18W, ALIB_PARAMS_5040),
+    "AMD Ryzen 5 5560U": (DEV_PARAMS_18W, ALIB_PARAMS_5040, ENERGY_MAP_18W),
     # 28W works fine, 30W is pushing it
-    "AMD Ryzen 7 5700U": (DEV_PARAMS_5000, ALIB_PARAMS_5040),
-    "AMD Ryzen 7 5800U": (DEV_PARAMS_5000, ALIB_PARAMS_5040),
+    "AMD Ryzen 7 5700U": (DEV_PARAMS_5000, ALIB_PARAMS_5040, ENERGY_MAP),
+    "AMD Ryzen 7 5800U": (DEV_PARAMS_5000, ALIB_PARAMS_5040, ENERGY_MAP),
     # GPD Win 4
     # model name    : AMD Ryzen 7 6800U with Radeon Graphics
-    "AMD Ryzen 7 6800U": (DEV_PARAMS_6000, ALIB_PARAMS_6040),
-    "AMD Ryzen 7 7840U": (DEV_PARAMS_7040, ALIB_PARAMS_7040),
-    "AMD Ryzen 7 8840U": (DEV_PARAMS_8040, ALIB_PARAMS_8040),
+    "AMD Ryzen 7 6800U": (DEV_PARAMS_6000, ALIB_PARAMS_6040, ENERGY_MAP),
+    "AMD Ryzen 7 7840U": (DEV_PARAMS_7040, ALIB_PARAMS_7040, ENERGY_MAP),
+    "AMD Ryzen 7 8840U": (DEV_PARAMS_8040, ALIB_PARAMS_8040, ENERGY_MAP),
     # AMD Athlon Silver 3050e (Win600, will it support tdp?)
-    "AMD Ryzen AI 9 HX 370": (DEV_PARAMS_HX370, ALIB_PARAMS_HX370),
-    "AMD Ryzen AI HX 360": (DEV_PARAMS_HX370, ALIB_PARAMS_HX370),
+    "AMD Ryzen AI 9 HX 370": (DEV_PARAMS_HX370, ALIB_PARAMS_HX370, ENERGY_MAP),
+    "AMD Ryzen AI HX 360": (DEV_PARAMS_HX370, ALIB_PARAMS_HX370, ENERGY_MAP),
+}
+
+ALLY_DATA: AsusTDP = {
+    "quiet": 10,
+    "balanced_min": 13,
+    "balanced": 15,
+    "performance_min": 20,
+    "performance_dc": 25,
+    "performance": 30,
+    "min_tdp": 5,
+    "max_tdp_dc": 25,
+    "max_tdp": 30,
+    "max_tdp_oc": 50,
+    "supports_cycle": True,
+}
+
+ALLYX_DATA: AsusTDP = {
+    "quiet": 13,
+    "balanced_min": 15,
+    "balanced": 17,
+    "performance_min": 22,
+    "performance_dc": 25,
+    "performance": 30,
+    "min_tdp": 5,
+    "max_tdp_dc": 25,
+    "max_tdp": 30,
+    "max_tdp_oc": 50,
+    "supports_cycle": True,
+}
+
+Z1_DATA: AsusTDP = {
+    "quiet": 40,
+    "balanced_min": 42,
+    "balanced": 45,
+    "performance_min": 50,
+    "performance_dc": 54,
+    "performance": 65,
+    "min_tdp": 5,
+    "max_tdp_dc": 54,
+    "max_tdp": 65,
+    "max_tdp_oc": 90,
+    "supports_cycle": False,
+}
+
+ASUS_DATA: dict[str, AsusTDP] = {
+    "ROG Ally RC71L": ALLY_DATA,
+    "ROG Ally X RC72L": ALLYX_DATA,
+    "ROG Flow Z13 GZ302": Z1_DATA,
 }
